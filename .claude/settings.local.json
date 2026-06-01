@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:utaten.com)",
+      "Bash(echo \"=== build exit: $? ===\")",
+      "Bash(npx tsc *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(npx playwright *)"
+    ]
+  }
+}

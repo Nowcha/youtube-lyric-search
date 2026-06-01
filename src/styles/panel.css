@@ -1,0 +1,135 @@
+#yls-lyric-panel.yls-panel {
+  --yls-surface: #212121;
+  --yls-surface-2: #383838;
+  --yls-text: #f1f1f1;
+  --yls-text-dim: #aaaaaa;
+  --yls-accent: #3ea6ff;
+  --yls-radius: 12px;
+
+  display: block;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: var(--yls-surface);
+  color: var(--yls-text);
+  border-radius: var(--yls-radius);
+  font-family: 'Roboto', 'Noto Sans JP', Arial, sans-serif;
+  box-sizing: border-box;
+}
+
+#yls-lyric-panel .yls-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--yls-surface-2);
+}
+
+#yls-lyric-panel .yls-song {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+#yls-lyric-panel .yls-song-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#yls-lyric-panel .yls-song-artist {
+  font-size: 1.3rem;
+  color: var(--yls-text-dim);
+}
+
+#yls-lyric-panel .yls-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#yls-lyric-panel .yls-btn {
+  appearance: none;
+  border: 1px solid var(--yls-surface-2);
+  background: var(--yls-surface-2);
+  color: var(--yls-text);
+  font-size: 1.2rem;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  line-height: 1.6;
+  transition: background 0.15s ease;
+}
+
+#yls-lyric-panel .yls-btn:hover {
+  background: #4a4a4a;
+}
+
+#yls-lyric-panel .yls-btn-active {
+  background: var(--yls-accent);
+  border-color: var(--yls-accent);
+  color: #0b0b0b;
+}
+
+#yls-lyric-panel .yls-btn-primary {
+  background: var(--yls-accent);
+  border-color: var(--yls-accent);
+  color: #0b0b0b;
+  font-weight: 600;
+}
+
+#yls-lyric-panel .yls-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#yls-lyric-panel .yls-input {
+  flex: 1 1 40%;
+  min-width: 90px;
+  padding: 6px 10px;
+  font-size: 1.2rem;
+  color: var(--yls-text);
+  background: #121212;
+  border: 1px solid var(--yls-surface-2);
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+#yls-lyric-panel .yls-input:focus {
+  outline: 2px solid var(--yls-accent);
+  outline-offset: 0;
+}
+
+#yls-lyric-panel .yls-body {
+  margin-top: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+#yls-lyric-panel .yls-lyric {
+  font-size: 1.5rem;
+  line-height: 2.1;
+  white-space: normal;
+  word-break: break-word;
+}
+
+#yls-lyric-panel .yls-lyric ruby rt {
+  font-size: 0.6em;
+  color: var(--yls-accent);
+  user-select: none;
+}
+
+#yls-lyric-panel.yls-hide-furigana .yls-lyric ruby rt {
+  display: none;
+}
+
+#yls-lyric-panel .yls-status {
+  margin: 8px 0;
+  font-size: 1.3rem;
+  color: var(--yls-text-dim);
+  line-height: 1.6;
+}

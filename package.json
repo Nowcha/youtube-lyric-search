@@ -1,0 +1,31 @@
+{
+  "name": "youtube-lyric-search",
+  "version": "1.0.0",
+  "description": "Display utaten.com lyrics next to the YouTube player while listening to music.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "test:e2e": "node scripts/run-extension-test.mjs",
+    "lint": "tsc --noEmit",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.4.0",
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.7",
+    "jsdom": "^25.0.1",
+    "playwright": "^1.60.0",
+    "playwright-core": "^1.60.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vite": "^7.3.3",
+    "vitest": "^4.1.7"
+  }
+}
