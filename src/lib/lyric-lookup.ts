@@ -1,4 +1,4 @@
-import { buildSearchUrl, extractFirstLyricPath, toLyricUrl } from './utaten-client';
+import { buildSearchUrl, selectBestLyricPath, toLyricUrl } from './utaten-client';
 import { cacheKey, getCached, setCached } from './cache';
 import type { LyricResponse } from './messages';
 import type { SongQuery } from '../types';
@@ -15,7 +15,9 @@ export type FetchText = (url: string) => Promise<string>;
  */
 async function findLyricPath(query: SongQuery, fetchText: FetchText): Promise<string | null> {
   const searchHtml = await fetchText(buildSearchUrl(query));
-  return extractFirstLyricPath(searchHtml);
+  // Verify the result actually matches the query — utaten can return loose /
+  // same-title-different-artist hits, which we reject rather than show wrong lyrics.
+  return selectBestLyricPath(searchHtml, query);
 }
 
 export async function lookupLyric(query: SongQuery, fetchText: FetchText): Promise<LyricResponse> {

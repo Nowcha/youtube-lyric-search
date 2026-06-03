@@ -8,6 +8,17 @@ export interface RawVideoInfo {
   channelName: string;
 }
 
+/**
+ * Pre-separated title / artist signals, e.g. from the Media Session API where
+ * YouTube exposes curated `title` and `artist` fields for music content.
+ */
+export interface RawStructuredInfo {
+  /** The song title field (usually already the bare title, e.g. "Pretender"). */
+  title: string;
+  /** The artist field (usually the bare performer, e.g. "Official髭男dism"). */
+  artist: string;
+}
+
 /** Keywords that mark a bracketed segment or token as non-title "noise". */
 const NOISE_KEYWORDS =
   /(official|video|music\s*video|m\/?v|audio|lyrics?|visualizer|hd|hq|4k|full|ver\.?|version|teaser|trailer|live|cover|remix|prod\.?|feat\.?|ft\.?|featuring|歌詞|字幕|歌ってみた|フル|公式|本編|ミュージック\s*[・]?\s*ビデオ)/i;
@@ -153,4 +164,35 @@ export function parseSongQuery(info: RawVideoInfo): SongQuery {
   }
 
   return { title: stripFeaturing(cleaned) || cleaned, artist: channel.artist };
+}
+
+/**
+ * Refines pre-separated metadata (e.g. from the Media Session API) into a
+ * {@link SongQuery}.
+ *
+ * Because the title and artist already arrive separated and curated, this avoids
+ * the order-ambiguity of {@link parseSongQuery}. It still:
+ *  - strips noise brackets / loose noise / "feat." tails from both fields, and
+ *  - re-splits the title when a provider passes the full "Artist - Title" string,
+ *    using the artist field to decide which side is the real title.
+ */
+export function refineStructuredQuery(info: RawStructuredInfo): SongQuery {
+  const artist = collapseWhitespace(stripLooseNoise(stripNoiseBrackets(info.artist)));
+  const cleanedTitle = collapseWhitespace(stripNoiseBrackets(info.title));
+
+  let titleSide = cleanedTitle;
+  const split = splitOnSeparator(cleanedTitle);
+  if (split && artist) {
+    if (matchesChannel(split.left, artist)) {
+      titleSide = split.right;
+    } else if (matchesChannel(split.right, artist)) {
+      titleSide = split.left;
+    }
+  }
+
+  const title = collapseWhitespace(stripFeaturing(stripLooseNoise(titleSide)));
+  return {
+    title: title || cleanedTitle || collapseWhitespace(info.title),
+    artist: artist || collapseWhitespace(info.artist),
+  };
 }

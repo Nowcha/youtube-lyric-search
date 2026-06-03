@@ -24,6 +24,13 @@
   border-bottom: 1px solid var(--yls-surface-2);
 }
 
+#yls-lyric-panel .yls-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 #yls-lyric-panel .yls-song {
   display: flex;
   flex-direction: column;
@@ -42,6 +49,28 @@
 #yls-lyric-panel .yls-song-artist {
   font-size: 1.3rem;
   color: var(--yls-text-dim);
+}
+
+#yls-lyric-panel .yls-icon-btn {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--yls-surface-2);
+  background: var(--yls-surface-2);
+  color: var(--yls-text);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: background 0.15s ease;
+}
+
+#yls-lyric-panel .yls-icon-btn:hover {
+  background: #4a4a4a;
 }
 
 #yls-lyric-panel .yls-controls {
@@ -132,4 +161,33 @@
   font-size: 1.3rem;
   color: var(--yls-text-dim);
   line-height: 1.6;
+}
+
+/* Collapsed state: shrink to a compact title bar with just the expand button. */
+#yls-lyric-panel.yls-collapsed {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+}
+
+#yls-lyric-panel.yls-collapsed .yls-header {
+  flex-direction: row;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+#yls-lyric-panel.yls-collapsed .yls-header-top {
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+#yls-lyric-panel.yls-collapsed .yls-song-title {
+  font-size: 1.2rem;
+  white-space: nowrap;
+}
+
+#yls-lyric-panel.yls-collapsed .yls-song-artist,
+#yls-lyric-panel.yls-collapsed .yls-controls,
+#yls-lyric-panel.yls-collapsed .yls-search,
+#yls-lyric-panel.yls-collapsed .yls-body {
+  display: none;
 }

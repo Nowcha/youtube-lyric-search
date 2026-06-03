@@ -2,6 +2,7 @@ import type { SongQuery } from '../types';
 
 const PANEL_ID = 'yls-lyric-panel';
 const FURIGANA_STORAGE_KEY = 'showFurigana';
+const COLLAPSE_STORAGE_KEY = 'collapsed';
 
 /** Callbacks the panel uses to ask the host (content script) to do work. */
 export interface PanelCallbacks {
@@ -44,6 +45,7 @@ export class LyricPanel {
   private readonly songArtistEl: HTMLElement;
   private readonly utatenLink: HTMLAnchorElement;
   private readonly furiganaButton: HTMLButtonElement;
+  private readonly collapseButton: HTMLButtonElement;
   private readonly titleInput: HTMLInputElement;
   private readonly artistInput: HTMLInputElement;
   private readonly body: HTMLElement;
@@ -58,10 +60,19 @@ export class LyricPanel {
 
     const header = el('div', { className: 'yls-header' });
 
+    const headerTop = el('div', { className: 'yls-header-top' });
+
     const song = el('div', { className: 'yls-song' });
     this.songTitleEl = el('span', { className: 'yls-song-title', text: '歌詞' });
     this.songArtistEl = el('span', { className: 'yls-song-artist' });
     song.append(this.songTitleEl, this.songArtistEl);
+
+    this.collapseButton = el('button', { className: 'yls-icon-btn yls-collapse' });
+    this.collapseButton.type = 'button';
+    this.collapseButton.addEventListener('click', () => {
+      void this.toggleCollapsed();
+    });
+    headerTop.append(song, this.collapseButton);
 
     const controls = el('div', { className: 'yls-controls' });
     this.furiganaButton = el('button', { className: 'yls-btn', text: 'ふりがな' });
@@ -98,13 +109,15 @@ export class LyricPanel {
       this.callbacks.onSearch(this.readInputs());
     });
 
-    header.append(song, controls, form);
+    header.append(headerTop, controls, form);
 
     this.body = el('div', { className: 'yls-body' });
 
     this.root.append(header, this.body);
 
+    this.setCollapsed(false); // Sets the icon/aria before the stored value loads.
     void this.loadFuriganaPreference();
+    void this.loadCollapsePreference();
   }
 
   /** Inserts the panel at the top of the given container if not already mounted. */
@@ -207,5 +220,34 @@ export class LyricPanel {
   private setFurigana(show: boolean): void {
     this.root.classList.toggle('yls-hide-furigana', !show);
     this.furiganaButton.classList.toggle('yls-btn-active', show);
+  }
+
+  private async loadCollapsePreference(): Promise<void> {
+    try {
+      const stored = await chrome.storage.local.get(COLLAPSE_STORAGE_KEY);
+      this.setCollapsed(stored[COLLAPSE_STORAGE_KEY] === true);
+    } catch {
+      this.setCollapsed(false); // Default to expanded; non-fatal.
+    }
+  }
+
+  private async toggleCollapsed(): Promise<void> {
+    const next = !this.root.classList.contains('yls-collapsed');
+    this.setCollapsed(next);
+    try {
+      await chrome.storage.local.set({ [COLLAPSE_STORAGE_KEY]: next });
+    } catch {
+      // Preference is non-critical; ignore persistence failures.
+    }
+  }
+
+  private setCollapsed(collapsed: boolean): void {
+    this.root.classList.toggle('yls-collapsed', collapsed);
+    this.collapseButton.textContent = collapsed ? '▸' : '▾';
+    this.collapseButton.setAttribute('aria-expanded', String(!collapsed));
+    this.collapseButton.setAttribute(
+      'aria-label',
+      collapsed ? '歌詞パネルを展開' : '歌詞パネルを格納',
+    );
   }
 }

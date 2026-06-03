@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSongQuery } from '../src/lib/title-parser';
+import { parseSongQuery, refineStructuredQuery } from '../src/lib/title-parser';
 
 describe('parseSongQuery', () => {
   it('splits "Artist - Title" and strips a noise bracket', () => {
@@ -108,6 +108,56 @@ describe('parseSongQuery', () => {
     expect(parseSongQuery({ videoTitle: 'Artist - Song', channelName: 'Unrelated Label' })).toEqual({
       artist: 'Artist',
       title: 'Song',
+    });
+  });
+});
+
+describe('refineStructuredQuery', () => {
+  it('keeps pre-separated Media Session fields as-is', () => {
+    expect(refineStructuredQuery({ title: 'アイドル', artist: 'YOASOBI' })).toEqual({
+      artist: 'YOASOBI',
+      title: 'アイドル',
+    });
+  });
+
+  it('strips a noise bracket left in the title field', () => {
+    expect(
+      refineStructuredQuery({ title: 'Pretender [Official Video]', artist: 'Official髭男dism' }),
+    ).toEqual({ artist: 'Official髭男dism', title: 'Pretender' });
+  });
+
+  it('strips a "feat." tail from the title field', () => {
+    expect(refineStructuredQuery({ title: 'Song feat. Someone', artist: 'Artist' })).toEqual({
+      artist: 'Artist',
+      title: 'Song',
+    });
+  });
+
+  it('re-splits when the title field carries the full "Artist - Title"', () => {
+    expect(refineStructuredQuery({ title: 'YOASOBI - アイドル', artist: 'YOASOBI' })).toEqual({
+      artist: 'YOASOBI',
+      title: 'アイドル',
+    });
+  });
+
+  it('uses the artist side to pick the title from "Title - Artist" order', () => {
+    expect(refineStructuredQuery({ title: 'いのちの食べ方 - Eve', artist: 'Eve' })).toEqual({
+      artist: 'Eve',
+      title: 'いのちの食べ方',
+    });
+  });
+
+  it('does not split a hyphenated title when neither side is the artist', () => {
+    expect(refineStructuredQuery({ title: 'Self - Control', artist: 'TM NETWORK' })).toEqual({
+      artist: 'TM NETWORK',
+      title: 'Self - Control',
+    });
+  });
+
+  it('trims surrounding whitespace from both fields', () => {
+    expect(refineStructuredQuery({ title: '  Lemon  ', artist: '  米津玄師  ' })).toEqual({
+      artist: '米津玄師',
+      title: 'Lemon',
     });
   });
 });
