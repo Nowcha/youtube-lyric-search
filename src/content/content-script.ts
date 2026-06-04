@@ -11,10 +11,12 @@ const QUERY_TIMEOUT_MS = 12000;
 const QUERY_POLL_MS = 300;
 
 let panel: LyricPanel | null = null;
-/** The `?v=` id whose detection we have already started; dedupes events + polling. */
-let handledVideoId = '';
-/** Title we last searched, used to detect when metadata has updated to a new video. */
-let lastTitle = '';
+/** The `?v=` id whose result is currently displayed in the panel ('' when none). */
+let renderedVideoId = '';
+/** The `?v=` id of the navigation currently being processed (in-flight). */
+let pipelineVideoId = '';
+/** Query of the currently displayed result; used to detect when metadata is fresh. */
+let lastQuery: SongQuery | null = null;
 /** Incremented on every navigation so late async results can be discarded. */
 let navToken = 0;
 const VIDEO_POLL_MS = 2000;
@@ -50,28 +52,51 @@ function waitForElement(selector: string, timeoutMs: number): Promise<Element | 
   });
 }
 
+function queriesEqual(a: SongQuery, b: SongQuery): boolean {
+  return a.title === b.title && a.artist === b.artist;
+}
+
 /**
- * Polls until a song query is detectable whose title differs from the previous
- * video's title. YouTube fires navigation events before the title metadata
- * updates, so waiting for the title to change avoids searching with the prior
- * video's information. On timeout it returns the most recent query seen (best
- * effort — e.g. when two consecutive videos genuinely share a title).
+ * Polls for the song query that belongs to `videoId`.
+ *
+ * YouTube fires navigation events (and changes the URL) before the title / artist
+ * metadata in the DOM catches up, so a naive read returns the *previous* video's
+ * information. To avoid that we resolve only when the query is:
+ *  - **stable** — identical across two consecutive polls, so we never read a
+ *    half-updated DOM (e.g. new title but stale channel), and
+ *  - **fresh** — different from the query currently displayed (`previous`), so we
+ *    do not grab the outgoing video's still-rendered metadata.
+ *
+ * The poll aborts early if the user navigates again (the URL's `v` no longer
+ * matches `videoId`). On timeout it returns the last query seen as a best effort;
+ * the caller compares it to `previous` to decide whether anything actually
+ * changed. Returns null only when no metadata was ever readable.
  */
-function waitForFreshQuery(previousTitle: string, timeoutMs: number): Promise<SongQuery | null> {
+function waitForVideoQuery(
+  videoId: string,
+  previous: SongQuery | null,
+  timeoutMs: number,
+): Promise<SongQuery | null> {
   return new Promise((resolve) => {
     const start = Date.now();
-    let latest: SongQuery | null = null;
+    let lastSeen: SongQuery | null = null;
     const tick = (): void => {
+      if (currentVideoId() !== videoId) {
+        resolve(lastSeen); // Superseded by a newer navigation.
+        return;
+      }
       const query = getSongQuery();
       if (query) {
-        latest = query;
-        if (query.title !== previousTitle) {
+        const stable = lastSeen !== null && queriesEqual(lastSeen, query);
+        const fresh = previous === null || !queriesEqual(query, previous);
+        if (stable && fresh) {
           resolve(query);
           return;
         }
+        lastSeen = query;
       }
       if (Date.now() - start > timeoutMs) {
-        resolve(latest);
+        resolve(lastSeen);
         return;
       }
       setTimeout(tick, QUERY_POLL_MS);
@@ -104,7 +129,18 @@ async function requestLyric(query: SongQuery): Promise<LyricResponse> {
   return raw;
 }
 
-async function runSearch(query: SongQuery, token: number): Promise<void> {
+/** True when a newer navigation has superseded this search, or the video changed. */
+function isStale(videoId: string, token: number): boolean {
+  return token !== navToken || currentVideoId() !== videoId;
+}
+
+/** Marks `videoId` as the one currently displayed so we stop reprocessing it. */
+function markRendered(videoId: string, query: SongQuery): void {
+  renderedVideoId = videoId;
+  lastQuery = query;
+}
+
+async function runSearch(query: SongQuery, videoId: string, token: number): Promise<void> {
   if (!panel) {
     return;
   }
@@ -116,7 +152,7 @@ async function runSearch(query: SongQuery, token: number): Promise<void> {
 
   try {
     const response = await requestLyric(query);
-    if (token !== navToken) {
+    if (isStale(videoId, token)) {
       return; // A newer navigation superseded this search; discard the result.
     }
     if (!response.ok) {
@@ -125,17 +161,20 @@ async function runSearch(query: SongQuery, token: number): Promise<void> {
       } else {
         panel.setError(response.message);
       }
+      markRendered(videoId, query); // Resolved (even if no match) — don't reprocess.
       return;
     }
 
     const parsed = parseLyricDocument(response.html);
     if (!parsed) {
       panel.setNotFound(query);
+      markRendered(videoId, query);
       return;
     }
     panel.setLyric(parsed.titleText || query.title, parsed.lyricFragment, response.lyricUrl);
+    markRendered(videoId, query);
   } catch (error) {
-    if (token !== navToken) {
+    if (isStale(videoId, token)) {
       return;
     }
     console.error(
@@ -148,33 +187,41 @@ async function runSearch(query: SongQuery, token: number): Promise<void> {
 
 /** Handles a manual search from the panel inputs. */
 function handleManualSearch(query: SongQuery): void {
-  handledVideoId = currentVideoId();
-  lastTitle = query.title;
-  void runSearch(query, ++navToken);
+  void runSearch(query, currentVideoId(), ++navToken);
+}
+
+/** Re-attaches the panel to its mount point if YouTube re-rendered the rail. */
+function ensureMounted(): void {
+  const existing = document.querySelector(MOUNT_SELECTOR);
+  if (panel && existing instanceof HTMLElement) {
+    panel.mount(existing);
+  }
 }
 
 async function syncWithCurrentVideo(): Promise<void> {
   if (!isWatchPage()) {
-    handledVideoId = '';
-    lastTitle = '';
+    pipelineVideoId = '';
+    renderedVideoId = '';
+    lastQuery = null;
     return;
   }
 
   const videoId = currentVideoId();
-
-  // Same video (event re-fired or polled again): only ensure the panel is still
-  // mounted. Crucially, do NOT bump the nav token here, or a concurrent trigger
-  // would invalidate an in-flight search for this same video.
-  if (videoId && videoId === handledVideoId) {
-    const existing = document.querySelector(MOUNT_SELECTOR);
-    if (panel && existing instanceof HTMLElement) {
-      panel.mount(existing);
-    }
+  if (!videoId) {
     return;
   }
 
-  // A genuinely new video — commit to handling it and supersede older work.
-  handledVideoId = videoId;
+  // Already shown, or already being processed: just keep the panel mounted. Do NOT
+  // bump the nav token here, or a concurrent trigger would invalidate the in-flight
+  // search for this same video.
+  if (videoId === renderedVideoId || videoId === pipelineVideoId) {
+    ensureMounted();
+    return;
+  }
+
+  // A genuinely new video — claim it and supersede older work. `pipelineVideoId`
+  // (distinct from `renderedVideoId`) marks it as in-flight, not yet displayed.
+  pipelineVideoId = videoId;
   const token = ++navToken;
 
   const container = await waitForElement(MOUNT_SELECTOR, MOUNT_TIMEOUT_MS);
@@ -186,19 +233,26 @@ async function syncWithCurrentVideo(): Promise<void> {
     panel = new LyricPanel({ onSearch: handleManualSearch });
   }
   panel.mount(container);
-  panel.setBusy('曲情報を取得中…');
+  panel.setBusy('曲情報を取得中…'); // Clears the previous video's lyrics immediately.
 
-  const query = await waitForFreshQuery(lastTitle, QUERY_TIMEOUT_MS);
-  if (token !== navToken) {
+  const query = await waitForVideoQuery(videoId, lastQuery, QUERY_TIMEOUT_MS);
+  if (isStale(videoId, token)) {
     return;
   }
   if (!query) {
+    pipelineVideoId = ''; // Metadata never appeared — allow a later retry.
     panel.setError('曲情報を取得できませんでした。手動で検索してください。');
     return;
   }
 
-  lastTitle = query.title;
-  void runSearch(query, token);
+  // Metadata is identical to what is already displayed (e.g. a replay or chapter
+  // jump): the shown lyrics are already correct, so keep them and stop polling.
+  if (lastQuery && queriesEqual(query, lastQuery)) {
+    markRendered(videoId, query);
+    return;
+  }
+
+  await runSearch(query, videoId, token);
 }
 
 // React to SPA navigation events, and poll the video id as a fallback for
@@ -207,7 +261,11 @@ window.addEventListener('yt-navigate-finish', () => {
   void syncWithCurrentVideo();
 });
 setInterval(() => {
-  if (isWatchPage() && currentVideoId() !== handledVideoId) {
+  if (!isWatchPage()) {
+    return;
+  }
+  const videoId = currentVideoId();
+  if (videoId && videoId !== renderedVideoId && videoId !== pipelineVideoId) {
     void syncWithCurrentVideo();
   }
 }, VIDEO_POLL_MS);

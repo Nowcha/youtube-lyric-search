@@ -96,6 +96,37 @@ function readMusicSectionInfo(): { title: string; artist: string } | null {
   return { title, artist };
 }
 
+/** Strips whitespace and lowercases so two strings can be compared loosely. */
+function normalizeLoose(value: string): string {
+  return value.replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * Confirms a music card belongs to the *currently playing* video.
+ *
+ * YouTube does not clear the previous video's attribute card immediately on
+ * navigation — it lingers in the DOM until the new metadata renders. Because the
+ * card is otherwise our preferred source, a stale card would make us search for
+ * the previous song. The watch-page title heading (driving `heading.videoTitle`)
+ * updates reliably per video, so we only trust the card when the current heading
+ * actually contains the card's song title or artist; otherwise it is stale.
+ */
+function musicCardMatchesHeading(
+  music: { title: string; artist: string },
+  heading: RawVideoInfo,
+): boolean {
+  const headingText = normalizeLoose(`${heading.videoTitle} ${heading.channelName}`);
+  if (!headingText) {
+    return false;
+  }
+  const cardTitle = normalizeLoose(music.title);
+  const cardArtist = normalizeLoose(music.artist);
+  return (
+    (cardTitle.length > 1 && headingText.includes(cardTitle)) ||
+    (cardArtist.length > 1 && headingText.includes(cardArtist))
+  );
+}
+
 /**
  * Reads the current video title and channel, or null when metadata is not ready.
  *
@@ -119,24 +150,33 @@ export function readVideoInfo(): RawVideoInfo | null {
 /**
  * Derives a {@link SongQuery} for the currently playing video, if detectable.
  *
+ * The watch-page title heading (read by {@link readVideoInfo}) is the per-video
+ * anchor: it updates reliably when the video changes and never lingers from the
+ * previous video. So it drives the result, and the "Music in this video" card is
+ * used only as a clean-up *enhancement* when it is confirmed to belong to the
+ * current video (see {@link musicCardMatchesHeading}). Returning null while the
+ * heading is still a placeholder lets the caller keep polling for real metadata.
+ *
  * Source priority (most reliable first):
- *  1. The "Music in this video" card — pre-separated, noise-free song / artist.
+ *  1. The "Music in this video" card, only when it matches the current heading —
+ *     pre-separated, noise-free song / artist.
  *  2. Parsing the combined video title + channel name for everything else
  *     (covers user uploads, covers, remixes that YouTube has not matched).
  */
 export function getSongQuery(): SongQuery | null {
+  const info = readVideoInfo();
+  if (!info) {
+    return null;
+  }
+
   const music = readMusicSectionInfo();
-  if (music) {
+  if (music && musicCardMatchesHeading(music, info)) {
     const refined = refineStructuredQuery(music);
     if (refined.title && !isPlaceholder(refined.title)) {
       return refined;
     }
   }
 
-  const info = readVideoInfo();
-  if (!info) {
-    return null;
-  }
   const query = parseSongQuery(info);
   return query.title && !isPlaceholder(query.title) ? query : null;
 }
