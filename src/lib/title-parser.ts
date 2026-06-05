@@ -19,9 +19,14 @@ export interface RawStructuredInfo {
   artist: string;
 }
 
-/** Keywords that mark a bracketed segment or token as non-title "noise". */
+/**
+ * Keywords that mark a bracketed segment or token as non-title "noise". Includes
+ * anime / tie-in descriptors (アニメ, 主題歌, …) so a work name quoted inside such a
+ * group — e.g. "（TVアニメ『マリッジトキシン』Collab MV）" — is removed before we look
+ * for a quoted song title, rather than being mistaken for one.
+ */
 const NOISE_KEYWORDS =
-  /(official|video|music\s*video|m\/?v|audio|lyrics?|visualizer|hd|hq|4k|full|ver\.?|version|teaser|trailer|live|cover|remix|prod\.?|feat\.?|ft\.?|featuring|歌詞|字幕|歌ってみた|フル|公式|本編|ミュージック\s*[・]?\s*ビデオ)/i;
+  /(official|video|music\s*video|m\/?v|audio|lyrics?|visualizer|hd|hq|4k|full|ver\.?|version|teaser|trailer|live|cover|remix|prod\.?|feat\.?|ft\.?|featuring|歌詞|字幕|歌ってみた|フル|公式|本編|ミュージック\s*[・]?\s*ビデオ|アニメ|anime|主題歌|挿入歌|タイアップ|オープニング|エンディング)/i;
 
 /** Matches a single bracketed group of any common ASCII / full-width bracket type. */
 const BRACKET_GROUP = /[【(\[（｛{][^】)\]）｝}]*[】)\]）｝}]/g;
@@ -86,6 +91,28 @@ function cleanPart(value: string): string {
   return collapseWhitespace(stripLooseNoise(stripFeaturing(value))) || collapseWhitespace(value);
 }
 
+/**
+ * Extracts a leading 【Artist】Title marker, common for Japanese music videos
+ * (e.g. "【AKASAKI】シャケナベイベー / Shake Na Baby"). Only the full-width 【】 /
+ * ［］ "marker" brackets are honored — parentheses usually carry subtitles, not
+ * the artist. Returns null when the title does not start with such a bracket.
+ */
+function extractLeadingBracketArtist(title: string): { artist: string; rest: string } | null {
+  const match = /^[【［]([^】］]+)[】］]\s*(.+)$/.exec(title);
+  if (!match || !match[1] || !match[2]) {
+    return null;
+  }
+  const artist = collapseWhitespace(match[1]);
+  const rest = collapseWhitespace(match[2]);
+  return artist && rest ? { artist, rest } : null;
+}
+
+/** Unwraps a fragment that is *entirely* a single bracket group, e.g. "【X】" → "X". */
+function unwrapSoloBracket(value: string): string {
+  const match = /^[【［(（[｛{]([^】］)）\]｝}]+)[】］)）\]｝}]$/.exec(value.trim());
+  return match && match[1] ? collapseWhitespace(match[1]) : value;
+}
+
 function normalizeForMatch(value: string): string {
   return collapseWhitespace(value).toLowerCase();
 }
@@ -134,28 +161,49 @@ function parseChannel(channelName: string): { artist: string; isTopic: boolean }
 /**
  * Derives a best-effort {@link SongQuery} from a YouTube video title and channel.
  *
- * Strategy order (most reliable first):
+ * Noise brackets are stripped FIRST so that quotes or separators living *inside*
+ * a "(… MV)" group — e.g. an anime name in 『』 — are never mistaken for the song
+ * (this was the "【AKASAKI】… （TVアニメ『マリッジトキシン』Collab MV）" failure).
+ *
+ * Strategy order (most reliable first), all on the de-noised title:
  *  1. Quoted title — Artist「Title」 / Artist『Title』
  *  2. "- Topic" channel — the video title is the bare song name
- *  3. Separator split — "Artist - Title"
- *  4. Fallback — whole cleaned title, artist taken from the channel
+ *  3. Leading 【Artist】Title marker — common for Japanese music videos
+ *  4. Separator split — "Artist - Title"
+ *  5. Fallback — whole cleaned title, artist taken from the channel
  */
 export function parseSongQuery(info: RawVideoInfo): SongQuery {
   const channel = parseChannel(info.channelName);
+  const cleaned = collapseWhitespace(stripNoiseBrackets(info.videoTitle));
 
-  const quoted = extractQuotedTitle(info.videoTitle);
+  const quoted = extractQuotedTitle(cleaned);
   if (quoted) {
-    const beforeArtist = collapseWhitespace(stripLooseNoise(stripNoiseBrackets(quoted.before)));
+    const beforeArtist = collapseWhitespace(stripLooseNoise(unwrapSoloBracket(quoted.before)));
     return {
       title: collapseWhitespace(stripFeaturing(quoted.title)),
       artist: beforeArtist || channel.artist,
     };
   }
 
-  const cleaned = collapseWhitespace(stripNoiseBrackets(info.videoTitle));
-
   if (channel.isTopic) {
     return { title: stripFeaturing(cleaned) || cleaned, artist: channel.artist };
+  }
+
+  const leading = extractLeadingBracketArtist(cleaned);
+  if (leading) {
+    const segment = splitOnSeparator(leading.rest);
+    // Bracket artist and channel agree → the bracket is the artist and the rest
+    // (its primary segment, dropping a "/ English subtitle") is the title.
+    if (matchesChannel(leading.artist, channel.artist)) {
+      const titlePart = segment ? segment.left : leading.rest;
+      return { title: cleanPart(titlePart), artist: leading.artist };
+    }
+    // Otherwise the bracket is likely a series/franchise tag: trust the channel
+    // as the artist and resolve the remainder ("Title / Artist") against it.
+    if (segment) {
+      return chooseArtistTitle(segment.left, segment.right, channel.artist);
+    }
+    return { title: cleanPart(leading.rest), artist: channel.artist };
   }
 
   const split = splitOnSeparator(cleaned);

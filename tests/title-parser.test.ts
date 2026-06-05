@@ -110,6 +110,39 @@ describe('parseSongQuery', () => {
       title: 'Song',
     });
   });
+
+  it('parses 【Artist】Title / Subtitle, ignoring an anime name quoted inside a noise bracket', () => {
+    // Regression: the 『マリッジトキシン』 inside "（TVアニメ…Collab MV）" used to be
+    // extracted as the song title. Noise brackets are now stripped first.
+    expect(
+      parseSongQuery({
+        videoTitle: '【AKASAKI】シャケナベイベー / Shake Na Baby（TVアニメ『マリッジトキシン』Collab MV）',
+        channelName: 'AKASAKI (19)',
+      }),
+    ).toEqual({ artist: 'AKASAKI', title: 'シャケナベイベー' });
+  });
+
+  it('treats a leading 【Artist】 as the artist when the channel agrees', () => {
+    expect(
+      parseSongQuery({ videoTitle: '【ヨルシカ】花に亡霊', channelName: 'ヨルシカ' }),
+    ).toEqual({ artist: 'ヨルシカ', title: '花に亡霊' });
+  });
+
+  it('treats a leading 【franchise】 tag as non-artist and trusts the channel order', () => {
+    // The bracket is a series tag, not the artist; channel "Omoi" disambiguates.
+    expect(
+      parseSongQuery({ videoTitle: '【プロセカ】テオ / Omoi', channelName: 'Omoi' }),
+    ).toEqual({ artist: 'Omoi', title: 'テオ' });
+  });
+
+  it('does not mistake a 『』 quote inside a noise bracket for the title', () => {
+    expect(
+      parseSongQuery({
+        videoTitle: 'Eve - 廻廻奇譚（アニメ『呪術廻戦』OP）',
+        channelName: 'Eve',
+      }),
+    ).toEqual({ artist: 'Eve', title: '廻廻奇譚' });
+  });
 });
 
 describe('refineStructuredQuery', () => {
