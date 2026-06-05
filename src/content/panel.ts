@@ -84,7 +84,7 @@ export class LyricPanel {
 
     const refreshButton = el('button', { className: 'yls-btn', text: '↻ 更新' });
     refreshButton.type = 'button';
-    refreshButton.title = '再生中の曲情報を再取得して歌詞を更新';
+    refreshButton.title = '保存した検索ワードを破棄し、再生中の曲情報をページから再取得';
     refreshButton.addEventListener('click', () => {
       this.callbacks.onRefresh();
     });

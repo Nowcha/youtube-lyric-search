@@ -2,6 +2,11 @@ import '../styles/panel.css';
 import { getSongQuery } from './youtube-metadata';
 import { parseLyricDocument } from './lyric-render';
 import { LyricPanel } from './panel';
+import {
+  loadQueryOverride,
+  saveQueryOverride,
+  clearQueryOverride,
+} from '../lib/query-overrides';
 import type { LyricResponse, SearchLyricRequest } from '../lib/messages';
 import type { SongQuery } from '../types';
 
@@ -147,7 +152,20 @@ function markRendered(videoId: string, query: SongQuery): void {
   lastQuery = query;
 }
 
-async function runSearch(query: SongQuery, videoId: string, token: number): Promise<void> {
+/**
+ * Runs a lyric search for `query` and renders the outcome.
+ *
+ * `persist` is set only for user-initiated searches: when such a search finds
+ * lyrics, the query is saved as this video's override (see `query-overrides.ts`)
+ * so future plays reuse the corrected words. Auto-detected searches never persist
+ * — we do not want to freeze a possibly-wrong auto guess.
+ */
+async function runSearch(
+  query: SongQuery,
+  videoId: string,
+  token: number,
+  persist = false,
+): Promise<void> {
   if (!panel) {
     return;
   }
@@ -180,6 +198,9 @@ async function runSearch(query: SongQuery, videoId: string, token: number): Prom
     }
     panel.setLyric(parsed.titleText || query.title, parsed.lyricFragment, response.lyricUrl);
     markRendered(videoId, query);
+    if (persist) {
+      void saveQueryOverride(videoId, query); // Remember this correction for next time.
+    }
   } catch (error) {
     if (isStale(videoId, token)) {
       return;
@@ -192,25 +213,32 @@ async function runSearch(query: SongQuery, videoId: string, token: number): Prom
   }
 }
 
-/** Handles a manual search from the panel inputs. */
+/** Handles a manual search from the panel inputs; persists it as the override. */
 function handleManualSearch(query: SongQuery): void {
-  void runSearch(query, currentVideoId(), ++navToken);
+  void runSearch(query, currentVideoId(), ++navToken, true);
 }
 
 /**
  * Forces a fresh metadata read + search for the current video, even if it was
  * already rendered. This is the user's escape hatch when auto-detection kept the
- * previous video's lyrics: clearing `lastQuery` drops the "freshness" constraint
- * so the next stable DOM read is accepted as-is (no diff against stale state).
+ * previous video's lyrics — and the reset for a saved override that turned out
+ * wrong: it discards the override and re-detects from the page. Clearing
+ * `lastQuery` drops the "freshness" constraint so the next stable DOM read is
+ * accepted as-is (no diff against stale state).
  */
 function handleRefresh(): void {
   if (!isWatchPage()) {
     return;
   }
+  const videoId = currentVideoId();
   renderedVideoId = '';
   pipelineVideoId = '';
   lastQuery = null;
-  void syncWithCurrentVideo();
+  // Discard any saved override first, then re-detect with it skipped so we never
+  // race the async removal against the override lookup in the re-sync.
+  void clearQueryOverride(videoId).finally(() => {
+    void syncWithCurrentVideo({ skipOverride: true });
+  });
 }
 
 /** Re-attaches the panel to its mount point if YouTube re-rendered the rail. */
@@ -221,7 +249,12 @@ function ensureMounted(): void {
   }
 }
 
-async function syncWithCurrentVideo(): Promise<void> {
+interface SyncOptions {
+  /** Skip the saved-override lookup and re-detect from the page (used by refresh). */
+  skipOverride?: boolean;
+}
+
+async function syncWithCurrentVideo(options: SyncOptions = {}): Promise<void> {
   if (!isWatchPage()) {
     pipelineVideoId = '';
     renderedVideoId = '';
@@ -257,6 +290,20 @@ async function syncWithCurrentVideo(): Promise<void> {
   }
   panel.mount(container);
   panel.setBusy('曲情報を取得中…'); // Clears the previous video's lyrics immediately.
+
+  // A saved correction for this video wins over auto-detection: search it
+  // directly and skip the metadata poll entirely. Refresh passes `skipOverride`
+  // to bypass this and force re-detection from the page.
+  if (!options.skipOverride) {
+    const override = await loadQueryOverride(videoId);
+    if (isStale(videoId, token)) {
+      return;
+    }
+    if (override) {
+      await runSearch(override, videoId, token);
+      return;
+    }
+  }
 
   const query = await waitForVideoQuery(videoId, lastQuery, QUERY_TIMEOUT_MS);
   if (isStale(videoId, token)) {
