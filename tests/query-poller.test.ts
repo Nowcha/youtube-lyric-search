@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { pollForVideoQuery, queriesEqual } from '../src/content/query-poller';
+import {
+  pollForVideoQuery,
+  queriesEqual,
+  shouldReleaseClaim,
+  type ClaimState,
+} from '../src/content/query-poller';
 import type { SongQuery } from '../src/types';
 
 const POLL_MS = 300;
@@ -66,6 +71,34 @@ describe('queriesEqual', () => {
   it('compares title and artist', () => {
     expect(queriesEqual(A, { ...A })).toBe(true);
     expect(queriesEqual(A, B)).toBe(false);
+  });
+});
+
+describe('shouldReleaseClaim', () => {
+  const base: ClaimState = {
+    token: 5,
+    navToken: 5,
+    pipelineVideoId: 'vid',
+    renderedVideoId: '',
+    videoId: 'vid',
+  };
+
+  it('releases when the current op abandons its own unrendered claim', () => {
+    expect(shouldReleaseClaim(base)).toBe(true);
+  });
+
+  it('does NOT release when superseded by a newer op (token mismatch)', () => {
+    // The newer op now owns the claim; releasing here would let the watchdog
+    // start a concurrent sync that discards the newer op's result.
+    expect(shouldReleaseClaim({ ...base, navToken: 6 })).toBe(false);
+  });
+
+  it('does NOT release when the video was rendered', () => {
+    expect(shouldReleaseClaim({ ...base, renderedVideoId: 'vid' })).toBe(false);
+  });
+
+  it('does NOT release a claim that belongs to a different video', () => {
+    expect(shouldReleaseClaim({ ...base, pipelineVideoId: 'other' })).toBe(false);
   });
 });
 

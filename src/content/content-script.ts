@@ -2,7 +2,7 @@ import '../styles/panel.css';
 import { getSongQuery } from './youtube-metadata';
 import { parseLyricDocument } from './lyric-render';
 import { LyricPanel } from './panel';
-import { pollForVideoQuery, queriesEqual } from './query-poller';
+import { pollForVideoQuery, queriesEqual, shouldReleaseClaim } from './query-poller';
 import {
   loadQueryOverride,
   saveQueryOverride,
@@ -110,6 +110,20 @@ function markRendered(videoId: string, query: SongQuery): void {
 }
 
 /**
+ * Releases the in-flight claim when this operation (identified by `token`) is
+ * abandoning `videoId` without having rendered it — but only if it is still the
+ * current operation. See {@link shouldReleaseClaim} for why the token guard
+ * matters (it prevents a stale op from freeing a newer op's claim).
+ */
+function releaseClaimIfAbandoned(videoId: string, token: number): void {
+  if (
+    shouldReleaseClaim({ token, navToken, pipelineVideoId, renderedVideoId, videoId })
+  ) {
+    pipelineVideoId = '';
+  }
+}
+
+/**
  * Runs a lyric search for `query` and renders the outcome.
  *
  * `persist` is set only for user-initiated searches: when such a search finds
@@ -173,9 +187,23 @@ async function runSearch(
   }
 }
 
-/** Handles a manual search from the panel inputs; persists it as the override. */
-function handleManualSearch(query: SongQuery): void {
-  void runSearch(query, currentVideoId(), ++navToken, true);
+/**
+ * Handles a manual search from the panel inputs; persists it as the override.
+ *
+ * It claims the pipeline (like an auto-sync) so the 2s watchdog cannot start a
+ * concurrent auto-sync that would bump the token and discard this result — the
+ * "manual change loops forever" bug. The finally releases the claim only if this
+ * search is abandoned while still current.
+ */
+async function handleManualSearch(query: SongQuery): Promise<void> {
+  const videoId = currentVideoId();
+  pipelineVideoId = videoId;
+  const token = ++navToken;
+  try {
+    await runSearch(query, videoId, token, true);
+  } finally {
+    releaseClaimIfAbandoned(videoId, token);
+  }
 }
 
 /**
@@ -291,11 +319,10 @@ async function syncWithCurrentVideo(options: SyncOptions = {}): Promise<void> {
 
     await runSearch(query, videoId, token);
   } finally {
-    // Release the claim unless we successfully rendered this video. Only touch it
-    // if we still own it (`=== videoId`); a newer navigation may have taken over.
-    if (pipelineVideoId === videoId && renderedVideoId !== videoId) {
-      pipelineVideoId = '';
-    }
+    // Release the claim unless we rendered this video — but only while we are
+    // still the current operation, so a manual search (or newer sync) that
+    // superseded us keeps its claim and is not stomped by the watchdog.
+    releaseClaimIfAbandoned(videoId, token);
   }
 }
 

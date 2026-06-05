@@ -5,6 +5,37 @@ export function queriesEqual(a: SongQuery, b: SongQuery): boolean {
   return a.title === b.title && a.artist === b.artist;
 }
 
+/** Snapshot of pipeline coordination state for {@link shouldReleaseClaim}. */
+export interface ClaimState {
+  /** The token of the operation deciding whether to release. */
+  token: number;
+  /** The current global token; a mismatch means a newer operation took over. */
+  navToken: number;
+  /** The video id currently claimed as in-flight. */
+  pipelineVideoId: string;
+  /** The video id currently rendered in the panel. */
+  renderedVideoId: string;
+  /** The video id this operation was processing. */
+  videoId: string;
+}
+
+/**
+ * Decides whether an operation that is exiting should release the in-flight
+ * pipeline claim. Releasing lets the 2s watchdog retry, which is correct ONLY
+ * when this operation is still the current one. The `token === navToken` guard is
+ * essential: a *stale* operation (superseded by a newer manual search or sync)
+ * must NOT release a claim the newer operation now owns — doing so lets the
+ * watchdog start a concurrent sync that discards the newer operation's result,
+ * the cause of the "manual change loops forever" bug.
+ */
+export function shouldReleaseClaim(state: ClaimState): boolean {
+  return (
+    state.token === state.navToken &&
+    state.pipelineVideoId === state.videoId &&
+    state.renderedVideoId !== state.videoId
+  );
+}
+
 /** Dependencies for {@link pollForVideoQuery}; injectable so the poller is unit-testable. */
 export interface PollDeps {
   /** The `?v=` id this poll is bound to; the poll aborts if it no longer matches. */
