@@ -2,6 +2,7 @@ import '../styles/panel.css';
 import { getSongQuery } from './youtube-metadata';
 import { parseLyricDocument } from './lyric-render';
 import { LyricPanel } from './panel';
+import { pollForVideoQuery, queriesEqual } from './query-poller';
 import {
   loadQueryOverride,
   saveQueryOverride,
@@ -57,63 +58,19 @@ function waitForElement(selector: string, timeoutMs: number): Promise<Element | 
   });
 }
 
-function queriesEqual(a: SongQuery, b: SongQuery): boolean {
-  return a.title === b.title && a.artist === b.artist;
-}
-
-/**
- * Polls for the song query that belongs to `videoId`.
- *
- * YouTube fires navigation events (and changes the URL) before the title / artist
- * metadata in the DOM catches up, so a naive read returns the *previous* video's
- * information. To avoid that we resolve only when the query is:
- *  - **stable** — identical across two consecutive polls, so we never read a
- *    half-updated DOM (e.g. new title but stale channel), and
- *  - **fresh** — different from the query currently displayed (`previous`), so we
- *    do not grab the outgoing video's still-rendered metadata.
- *
- * The poll aborts early if the user navigates again (the URL's `v` no longer
- * matches `videoId`). On timeout it returns the last query seen **only if that
- * query is fresh** (differs from `previous`); if the DOM never produced anything
- * but the outgoing video's metadata, it returns null so the caller treats it as
- * "could not read this video" rather than silently keeping the previous lyrics.
- * Returns null when no metadata was ever readable.
- */
+/** Thin wrapper binding {@link pollForVideoQuery} to the live page reads. */
 function waitForVideoQuery(
   videoId: string,
   previous: SongQuery | null,
   timeoutMs: number,
 ): Promise<SongQuery | null> {
-  const isFresh = (query: SongQuery | null): boolean =>
-    query !== null && (previous === null || !queriesEqual(query, previous));
-  return new Promise((resolve) => {
-    const start = Date.now();
-    let lastSeen: SongQuery | null = null;
-    const tick = (): void => {
-      if (currentVideoId() !== videoId) {
-        // Superseded by a newer navigation: only hand back fresh metadata, never
-        // the outgoing video's lingering query.
-        resolve(isFresh(lastSeen) ? lastSeen : null);
-        return;
-      }
-      const query = getSongQuery();
-      if (query) {
-        const stable = lastSeen !== null && queriesEqual(lastSeen, query);
-        if (stable && isFresh(query)) {
-          resolve(query);
-          return;
-        }
-        lastSeen = query;
-      }
-      if (Date.now() - start > timeoutMs) {
-        // Best effort, but reject a stale read: returning the previous video's
-        // query here would mark this video "rendered" with the wrong lyrics.
-        resolve(isFresh(lastSeen) ? lastSeen : null);
-        return;
-      }
-      setTimeout(tick, QUERY_POLL_MS);
-    };
-    tick();
+  return pollForVideoQuery({
+    videoId,
+    previous,
+    timeoutMs,
+    pollMs: QUERY_POLL_MS,
+    read: getSongQuery,
+    currentId: currentVideoId,
   });
 }
 
@@ -209,7 +166,10 @@ async function runSearch(
       '[YouTube Lyric Search] search failed',
       error instanceof Error ? error.message : String(error),
     );
-    panel.setError('拡張機能の通信に失敗しました');
+    panel.setError('拡張機能の通信に失敗しました。「再検索」で再試行できます。');
+    // Terminal for this attempt — mark rendered so the fallback poll does not
+    // retry a hard failure every couple of seconds. The user retries via 再検索.
+    markRendered(videoId, query);
   }
 }
 
@@ -280,49 +240,63 @@ async function syncWithCurrentVideo(options: SyncOptions = {}): Promise<void> {
   pipelineVideoId = videoId;
   const token = ++navToken;
 
-  const container = await waitForElement(MOUNT_SELECTOR, MOUNT_TIMEOUT_MS);
-  if (token !== navToken || !(container instanceof HTMLElement)) {
-    return;
-  }
+  // CRITICAL self-heal: every exit from here must either render `videoId` or
+  // release the in-flight claim. If we bail (mount timeout, superseded, no
+  // metadata) without releasing, `pipelineVideoId` stays stuck === videoId and
+  // the fallback poll below is blocked forever — the panel never recovers (this
+  // was the recurring "title not loaded on navigation" bug, e.g. when
+  // #secondary-inner is briefly absent in theater mode). The finally guarantees
+  // release so the 2s poll can retry.
+  try {
+    const container = await waitForElement(MOUNT_SELECTOR, MOUNT_TIMEOUT_MS);
+    if (token !== navToken || !(container instanceof HTMLElement)) {
+      return;
+    }
 
-  if (!panel) {
-    panel = new LyricPanel({ onSearch: handleManualSearch, onRefresh: handleRefresh });
-  }
-  panel.mount(container);
-  panel.setBusy('曲情報を取得中…'); // Clears the previous video's lyrics immediately.
+    if (!panel) {
+      panel = new LyricPanel({ onSearch: handleManualSearch, onRefresh: handleRefresh });
+    }
+    panel.mount(container);
+    panel.setBusy('曲情報を取得中…'); // Clears the previous video's lyrics immediately.
 
-  // A saved correction for this video wins over auto-detection: search it
-  // directly and skip the metadata poll entirely. Refresh passes `skipOverride`
-  // to bypass this and force re-detection from the page.
-  if (!options.skipOverride) {
-    const override = await loadQueryOverride(videoId);
+    // A saved correction for this video wins over auto-detection: search it
+    // directly and skip the metadata poll entirely. Refresh passes `skipOverride`
+    // to bypass this and force re-detection from the page.
+    if (!options.skipOverride) {
+      const override = await loadQueryOverride(videoId);
+      if (isStale(videoId, token)) {
+        return;
+      }
+      if (override) {
+        await runSearch(override, videoId, token);
+        return;
+      }
+    }
+
+    const query = await waitForVideoQuery(videoId, lastQuery, QUERY_TIMEOUT_MS);
     if (isStale(videoId, token)) {
       return;
     }
-    if (override) {
-      await runSearch(override, videoId, token);
+    if (!query) {
+      panel.setError('曲情報を取得できませんでした。「更新」か手動検索をお試しください。');
+      return; // finally releases the claim so the poll retries metadata later.
+    }
+
+    // Metadata is identical to what is already displayed (e.g. a replay or chapter
+    // jump): the shown lyrics are already correct, so keep them and stop polling.
+    if (lastQuery && queriesEqual(query, lastQuery)) {
+      markRendered(videoId, query);
       return;
     }
-  }
 
-  const query = await waitForVideoQuery(videoId, lastQuery, QUERY_TIMEOUT_MS);
-  if (isStale(videoId, token)) {
-    return;
+    await runSearch(query, videoId, token);
+  } finally {
+    // Release the claim unless we successfully rendered this video. Only touch it
+    // if we still own it (`=== videoId`); a newer navigation may have taken over.
+    if (pipelineVideoId === videoId && renderedVideoId !== videoId) {
+      pipelineVideoId = '';
+    }
   }
-  if (!query) {
-    pipelineVideoId = ''; // Metadata never appeared — allow a later retry.
-    panel.setError('曲情報を取得できませんでした。手動で検索してください。');
-    return;
-  }
-
-  // Metadata is identical to what is already displayed (e.g. a replay or chapter
-  // jump): the shown lyrics are already correct, so keep them and stop polling.
-  if (lastQuery && queriesEqual(query, lastQuery)) {
-    markRendered(videoId, query);
-    return;
-  }
-
-  await runSearch(query, videoId, token);
 }
 
 // React to SPA navigation events, and poll the video id as a fallback for
