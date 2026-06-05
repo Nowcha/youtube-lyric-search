@@ -8,6 +8,11 @@ const COLLAPSE_STORAGE_KEY = 'collapsed';
 export interface PanelCallbacks {
   /** Invoked when the user submits a manual search or requests a re-search. */
   onSearch: (query: SongQuery) => void;
+  /**
+   * Invoked when the user forces a refresh: re-read the current video's metadata
+   * from the page and search again. Used to recover when auto-detection is stale.
+   */
+  onRefresh: () => void;
 }
 
 interface ElementOptions {
@@ -76,6 +81,14 @@ export class LyricPanel {
     headerTop.append(song, this.collapseButton);
 
     const controls = el('div', { className: 'yls-controls' });
+
+    const refreshButton = el('button', { className: 'yls-btn', text: '↻ 更新' });
+    refreshButton.type = 'button';
+    refreshButton.title = '再生中の曲情報を再取得して歌詞を更新';
+    refreshButton.addEventListener('click', () => {
+      this.callbacks.onRefresh();
+    });
+
     this.furiganaButton = el('button', { className: 'yls-btn', text: 'ふりがな' });
     this.furiganaButton.type = 'button';
     this.furiganaButton.addEventListener('click', () => {
@@ -93,7 +106,7 @@ export class LyricPanel {
     this.utatenLink.rel = 'noopener noreferrer';
     this.utatenLink.hidden = true;
 
-    controls.append(this.furiganaButton, researchButton, this.utatenLink);
+    controls.append(refreshButton, this.furiganaButton, researchButton, this.utatenLink);
 
     const form = el('form', { className: 'yls-search' });
     this.titleInput = el('input', { className: 'yls-input' });

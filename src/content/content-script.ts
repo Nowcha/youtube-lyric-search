@@ -68,35 +68,42 @@ function queriesEqual(a: SongQuery, b: SongQuery): boolean {
  *    do not grab the outgoing video's still-rendered metadata.
  *
  * The poll aborts early if the user navigates again (the URL's `v` no longer
- * matches `videoId`). On timeout it returns the last query seen as a best effort;
- * the caller compares it to `previous` to decide whether anything actually
- * changed. Returns null only when no metadata was ever readable.
+ * matches `videoId`). On timeout it returns the last query seen **only if that
+ * query is fresh** (differs from `previous`); if the DOM never produced anything
+ * but the outgoing video's metadata, it returns null so the caller treats it as
+ * "could not read this video" rather than silently keeping the previous lyrics.
+ * Returns null when no metadata was ever readable.
  */
 function waitForVideoQuery(
   videoId: string,
   previous: SongQuery | null,
   timeoutMs: number,
 ): Promise<SongQuery | null> {
+  const isFresh = (query: SongQuery | null): boolean =>
+    query !== null && (previous === null || !queriesEqual(query, previous));
   return new Promise((resolve) => {
     const start = Date.now();
     let lastSeen: SongQuery | null = null;
     const tick = (): void => {
       if (currentVideoId() !== videoId) {
-        resolve(lastSeen); // Superseded by a newer navigation.
+        // Superseded by a newer navigation: only hand back fresh metadata, never
+        // the outgoing video's lingering query.
+        resolve(isFresh(lastSeen) ? lastSeen : null);
         return;
       }
       const query = getSongQuery();
       if (query) {
         const stable = lastSeen !== null && queriesEqual(lastSeen, query);
-        const fresh = previous === null || !queriesEqual(query, previous);
-        if (stable && fresh) {
+        if (stable && isFresh(query)) {
           resolve(query);
           return;
         }
         lastSeen = query;
       }
       if (Date.now() - start > timeoutMs) {
-        resolve(lastSeen);
+        // Best effort, but reject a stale read: returning the previous video's
+        // query here would mark this video "rendered" with the wrong lyrics.
+        resolve(isFresh(lastSeen) ? lastSeen : null);
         return;
       }
       setTimeout(tick, QUERY_POLL_MS);
@@ -190,6 +197,22 @@ function handleManualSearch(query: SongQuery): void {
   void runSearch(query, currentVideoId(), ++navToken);
 }
 
+/**
+ * Forces a fresh metadata read + search for the current video, even if it was
+ * already rendered. This is the user's escape hatch when auto-detection kept the
+ * previous video's lyrics: clearing `lastQuery` drops the "freshness" constraint
+ * so the next stable DOM read is accepted as-is (no diff against stale state).
+ */
+function handleRefresh(): void {
+  if (!isWatchPage()) {
+    return;
+  }
+  renderedVideoId = '';
+  pipelineVideoId = '';
+  lastQuery = null;
+  void syncWithCurrentVideo();
+}
+
 /** Re-attaches the panel to its mount point if YouTube re-rendered the rail. */
 function ensureMounted(): void {
   const existing = document.querySelector(MOUNT_SELECTOR);
@@ -230,7 +253,7 @@ async function syncWithCurrentVideo(): Promise<void> {
   }
 
   if (!panel) {
-    panel = new LyricPanel({ onSearch: handleManualSearch });
+    panel = new LyricPanel({ onSearch: handleManualSearch, onRefresh: handleRefresh });
   }
   panel.mount(container);
   panel.setBusy('曲情報を取得中…'); // Clears the previous video's lyrics immediately.
