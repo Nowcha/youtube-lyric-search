@@ -113,7 +113,12 @@
 #yls-lyric-panel .yls-search {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+}
+
+#yls-lyric-panel .yls-swap {
+  font-size: 1.2rem;
 }
 
 #yls-lyric-panel .yls-input {

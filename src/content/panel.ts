@@ -1,4 +1,4 @@
-import type { SongQuery } from '../types';
+import { swapSongQuery, type SongQuery } from '../types';
 
 const PANEL_ID = 'yls-lyric-panel';
 const FURIGANA_STORAGE_KEY = 'showFurigana';
@@ -48,6 +48,7 @@ export class LyricPanel {
   private readonly collapseButton: HTMLButtonElement;
   private readonly titleInput: HTMLInputElement;
   private readonly artistInput: HTMLInputElement;
+  private readonly swapButton: HTMLButtonElement;
   private readonly body: HTMLElement;
   private readonly callbacks: PanelCallbacks;
   private currentQuery: SongQuery = { title: '', artist: '' };
@@ -98,12 +99,21 @@ export class LyricPanel {
     this.titleInput = el('input', { className: 'yls-input' });
     this.titleInput.type = 'text';
     this.titleInput.placeholder = '曲名';
+
+    this.swapButton = el('button', { className: 'yls-icon-btn yls-swap', text: '⇄' });
+    this.swapButton.type = 'button';
+    this.swapButton.title = '曲名と歌手名を入れ替えて再検索';
+    this.swapButton.setAttribute('aria-label', '曲名と歌手名を入れ替えて再検索');
+    this.swapButton.addEventListener('click', () => {
+      this.swapFields();
+    });
+
     this.artistInput = el('input', { className: 'yls-input' });
     this.artistInput.type = 'text';
     this.artistInput.placeholder = '歌手名';
     const submit = el('button', { className: 'yls-btn yls-btn-primary', text: '検索' });
     submit.type = 'submit';
-    form.append(this.titleInput, this.artistInput, submit);
+    form.append(this.titleInput, this.swapButton, this.artistInput, submit);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       this.callbacks.onSearch(this.readInputs());
@@ -196,6 +206,19 @@ export class LyricPanel {
       title: this.titleInput.value.trim() || this.currentQuery.title,
       artist: this.artistInput.value.trim() || this.currentQuery.artist,
     };
+  }
+
+  /**
+   * Swaps the title and artist fields (inputs and the fallback `currentQuery`)
+   * then re-runs the search. Both must move together so `readInputs`'s
+   * empty-field fallback stays consistent with what the user sees.
+   */
+  private swapFields(): void {
+    const swapped = swapSongQuery(this.readInputs());
+    this.currentQuery = swapped;
+    this.titleInput.value = swapped.title;
+    this.artistInput.value = swapped.artist;
+    this.callbacks.onSearch(swapped);
   }
 
   private async loadFuriganaPreference(): Promise<void> {
