@@ -1,12 +1,18 @@
-import type { SongQuery } from '../types';
+import { swapSongQuery, type SongQuery } from '../types';
 
 const PANEL_ID = 'yls-lyric-panel';
 const FURIGANA_STORAGE_KEY = 'showFurigana';
+const COLLAPSE_STORAGE_KEY = 'collapsed';
 
 /** Callbacks the panel uses to ask the host (content script) to do work. */
 export interface PanelCallbacks {
   /** Invoked when the user submits a manual search or requests a re-search. */
   onSearch: (query: SongQuery) => void;
+  /**
+   * Invoked when the user forces a refresh: re-read the current video's metadata
+   * from the page and search again. Used to recover when auto-detection is stale.
+   */
+  onRefresh: () => void;
 }
 
 interface ElementOptions {
@@ -44,8 +50,10 @@ export class LyricPanel {
   private readonly songArtistEl: HTMLElement;
   private readonly utatenLink: HTMLAnchorElement;
   private readonly furiganaButton: HTMLButtonElement;
+  private readonly collapseButton: HTMLButtonElement;
   private readonly titleInput: HTMLInputElement;
   private readonly artistInput: HTMLInputElement;
+  private readonly swapButton: HTMLButtonElement;
   private readonly body: HTMLElement;
   private readonly callbacks: PanelCallbacks;
   private currentQuery: SongQuery = { title: '', artist: '' };
@@ -58,12 +66,29 @@ export class LyricPanel {
 
     const header = el('div', { className: 'yls-header' });
 
+    const headerTop = el('div', { className: 'yls-header-top' });
+
     const song = el('div', { className: 'yls-song' });
     this.songTitleEl = el('span', { className: 'yls-song-title', text: '歌詞' });
     this.songArtistEl = el('span', { className: 'yls-song-artist' });
     song.append(this.songTitleEl, this.songArtistEl);
 
+    this.collapseButton = el('button', { className: 'yls-icon-btn yls-collapse' });
+    this.collapseButton.type = 'button';
+    this.collapseButton.addEventListener('click', () => {
+      void this.toggleCollapsed();
+    });
+    headerTop.append(song, this.collapseButton);
+
     const controls = el('div', { className: 'yls-controls' });
+
+    const refreshButton = el('button', { className: 'yls-btn', text: '↻ 更新' });
+    refreshButton.type = 'button';
+    refreshButton.title = '保存した検索ワードを破棄し、再生中の曲情報をページから再取得';
+    refreshButton.addEventListener('click', () => {
+      this.callbacks.onRefresh();
+    });
+
     this.furiganaButton = el('button', { className: 'yls-btn', text: 'ふりがな' });
     this.furiganaButton.type = 'button';
     this.furiganaButton.addEventListener('click', () => {
@@ -81,30 +106,41 @@ export class LyricPanel {
     this.utatenLink.rel = 'noopener noreferrer';
     this.utatenLink.hidden = true;
 
-    controls.append(this.furiganaButton, researchButton, this.utatenLink);
+    controls.append(refreshButton, this.furiganaButton, researchButton, this.utatenLink);
 
     const form = el('form', { className: 'yls-search' });
     this.titleInput = el('input', { className: 'yls-input' });
     this.titleInput.type = 'text';
     this.titleInput.placeholder = '曲名';
+
+    this.swapButton = el('button', { className: 'yls-icon-btn yls-swap', text: '⇄' });
+    this.swapButton.type = 'button';
+    this.swapButton.title = '曲名と歌手名を入れ替えて再検索';
+    this.swapButton.setAttribute('aria-label', '曲名と歌手名を入れ替えて再検索');
+    this.swapButton.addEventListener('click', () => {
+      this.swapFields();
+    });
+
     this.artistInput = el('input', { className: 'yls-input' });
     this.artistInput.type = 'text';
     this.artistInput.placeholder = '歌手名';
     const submit = el('button', { className: 'yls-btn yls-btn-primary', text: '検索' });
     submit.type = 'submit';
-    form.append(this.titleInput, this.artistInput, submit);
+    form.append(this.titleInput, this.swapButton, this.artistInput, submit);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       this.callbacks.onSearch(this.readInputs());
     });
 
-    header.append(song, controls, form);
+    header.append(headerTop, controls, form);
 
     this.body = el('div', { className: 'yls-body' });
 
     this.root.append(header, this.body);
 
+    this.setCollapsed(false); // Sets the icon/aria before the stored value loads.
     void this.loadFuriganaPreference();
+    void this.loadCollapsePreference();
   }
 
   /** Inserts the panel at the top of the given container if not already mounted. */
@@ -185,6 +221,19 @@ export class LyricPanel {
     };
   }
 
+  /**
+   * Swaps the title and artist fields (inputs and the fallback `currentQuery`)
+   * then re-runs the search. Both must move together so `readInputs`'s
+   * empty-field fallback stays consistent with what the user sees.
+   */
+  private swapFields(): void {
+    const swapped = swapSongQuery(this.readInputs());
+    this.currentQuery = swapped;
+    this.titleInput.value = swapped.title;
+    this.artistInput.value = swapped.artist;
+    this.callbacks.onSearch(swapped);
+  }
+
   private async loadFuriganaPreference(): Promise<void> {
     try {
       const stored = await chrome.storage.local.get(FURIGANA_STORAGE_KEY);
@@ -207,5 +256,34 @@ export class LyricPanel {
   private setFurigana(show: boolean): void {
     this.root.classList.toggle('yls-hide-furigana', !show);
     this.furiganaButton.classList.toggle('yls-btn-active', show);
+  }
+
+  private async loadCollapsePreference(): Promise<void> {
+    try {
+      const stored = await chrome.storage.local.get(COLLAPSE_STORAGE_KEY);
+      this.setCollapsed(stored[COLLAPSE_STORAGE_KEY] === true);
+    } catch {
+      this.setCollapsed(false); // Default to expanded; non-fatal.
+    }
+  }
+
+  private async toggleCollapsed(): Promise<void> {
+    const next = !this.root.classList.contains('yls-collapsed');
+    this.setCollapsed(next);
+    try {
+      await chrome.storage.local.set({ [COLLAPSE_STORAGE_KEY]: next });
+    } catch {
+      // Preference is non-critical; ignore persistence failures.
+    }
+  }
+
+  private setCollapsed(collapsed: boolean): void {
+    this.root.classList.toggle('yls-collapsed', collapsed);
+    this.collapseButton.textContent = collapsed ? '▸' : '▾';
+    this.collapseButton.setAttribute('aria-expanded', String(!collapsed));
+    this.collapseButton.setAttribute(
+      'aria-label',
+      collapsed ? '歌詞パネルを展開' : '歌詞パネルを格納',
+    );
   }
 }

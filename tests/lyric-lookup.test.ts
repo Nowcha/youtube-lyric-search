@@ -2,10 +2,23 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { lookupLyric } from '../src/lib/lyric-lookup';
 import { setCached, cacheKey } from '../src/lib/cache';
 
+const LYRIC_PATH = '/lyric/qk19044046/';
 const LYRIC_URL = 'https://utaten.com/lyric/qk19044046/';
-const SEARCH_HTML =
-  '<table class="searchResult artistLyricList"><a href="/lyric/qk19044046/">Pretender</a></table>';
 const LYRIC_HTML = '<div class="lyricBody"><div class="hiragana">君</div></div>';
+
+/** Builds a parseable utaten search-results page with a single matching row. */
+function searchResultHtml(title: string, artist: string): string {
+  return (
+    '<table class="searchResult artistLyricList">' +
+    '<tr><th class="searchResult__head">楽曲・タイトル</th>' +
+    '<th class="searchResult__artist">アーティスト</th></tr>' +
+    `<tr><td><p class="searchResult__title"><a href="${LYRIC_PATH}"> ${title} </a></p></td>` +
+    `<td class="searchResult__artist"><p><a href="/artist/1/"> ${artist} </a></p></td></tr>` +
+    '</table>'
+  );
+}
+
+const SEARCH_HTML = searchResultHtml('Pretender', 'Official髭男dism');
 
 function installMockStorage(): void {
   const store: Record<string, unknown> = {};
@@ -48,16 +61,28 @@ describe('lookupLyric', () => {
   });
 
   it('retries with swapped artist/title when the first ordering misses', async () => {
+    // Metadata arrived reversed (title/artist swapped); the swapped retry matches.
     const fetchText = vi
       .fn<(url: string) => Promise<string>>()
-      .mockResolvedValueOnce('<p>no results</p>') // original order misses
-      .mockResolvedValueOnce(SEARCH_HTML) // swapped order hits
+      .mockResolvedValueOnce('<p>no results</p>') // original (reversed) order misses
+      .mockResolvedValueOnce(searchResultHtml('いのちの食べ方', 'Eve')) // swapped order hits
       .mockResolvedValueOnce(LYRIC_HTML); // lyric page
 
-    const result = await lookupLyric({ title: 'いのちの食べ方', artist: 'Eve' }, fetchText);
+    const result = await lookupLyric({ title: 'Eve', artist: 'いのちの食べ方' }, fetchText);
 
     expect(result).toEqual({ ok: true, html: LYRIC_HTML, lyricUrl: LYRIC_URL });
     expect(fetchText).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a confident-looking page whose title does not match the query', async () => {
+    // utaten returned a real results page, but for an unrelated song — reject it.
+    const fetchText = vi
+      .fn<(url: string) => Promise<string>>()
+      .mockResolvedValue(searchResultHtml('逆様', '誰か'));
+
+    const result = await lookupLyric({ title: 'I Love It', artist: 'Icona Pop' }, fetchText);
+
+    expect(result).toMatchObject({ ok: false, reason: 'not_found' });
   });
 
   it('returns not_found when the search has no lyric link', async () => {

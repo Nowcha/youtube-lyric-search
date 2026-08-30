@@ -6,7 +6,8 @@
       "Bash(npx tsc *)",
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(echo \"exit: $?\")",
-      "Bash(npx playwright *)"
+      "Bash(npx playwright *)",
+      "Bash(cd /d D:\\\\Project\\\\20-youtube-lylic-search)"
     ]
   }
 }

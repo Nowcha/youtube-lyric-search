@@ -40,4 +40,30 @@ describe('getSongQuery', () => {
       '<div id="owner"><ytd-channel-name id="channel-name"><a href="/@x">Official髭男dism</a></ytd-channel-name></div>';
     expect(getSongQuery()).toEqual({ artist: 'Official髭男dism', title: 'Pretender' });
   });
+
+  it('prefers the music card when it matches the current title heading', () => {
+    document.title = 'YOASOBI - アイドル【OFFICIAL MUSIC VIDEO】 - YouTube';
+    document.body.innerHTML = `
+      <ytd-watch-metadata>
+        <yt-video-attribute-view-model>
+          <div class="ytVideoAttributeViewModelTitle">アイドル</div>
+          <div class="ytVideoAttributeViewModelSubtitle">YOASOBI</div>
+        </yt-video-attribute-view-model>
+      </ytd-watch-metadata>`;
+    expect(getSongQuery()).toEqual({ artist: 'YOASOBI', title: 'アイドル' });
+  });
+
+  it('rejects a stale music card that does not match the current video heading', () => {
+    // URL/heading have moved to "Pretender", but the previous video's card lingers.
+    document.title = 'Official髭男dism - Pretender [Official Video] - YouTube';
+    document.body.innerHTML = `
+      <ytd-watch-metadata>
+        <yt-video-attribute-view-model>
+          <div class="ytVideoAttributeViewModelTitle">アイドル</div>
+          <div class="ytVideoAttributeViewModelSubtitle">YOASOBI</div>
+        </yt-video-attribute-view-model>
+      </ytd-watch-metadata>`;
+    // Falls back to parsing the heading instead of returning the stale card's song.
+    expect(getSongQuery()).toEqual({ artist: 'Official髭男dism', title: 'Pretender' });
+  });
 });
