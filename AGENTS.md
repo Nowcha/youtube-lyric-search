@@ -1,4 +1,3 @@
-<!-- GENERATED from CLAUDE.md - do not edit directly. source-sha256: bbfd2695e2756e78a8eb020ba4ecf5e86d0222772e40bdbc18c00e0a6715b65e -->
 # youtube-lyric-search
 
 YouTube 再生中の楽曲から歌詞を検索するブラウザ拡張。Vite + TypeScript。
